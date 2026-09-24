@@ -1,5 +1,6 @@
 # The only environment-specific values required by deploy.ps1.
 # Do not put credentials, keys, tokens, or secrets in this file.
-project_id: "ai-3-509610"
+project_id: "ai-4-509612"
 cluster:
-  name: "autopilot-cluster-1"
+  name: "ai-gke"
+  location: "us-central1-a"

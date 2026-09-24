@@ -5,16 +5,19 @@ Control Room, Kubernetes evidence collector, and structured Gemini incident
 troubleshooter. This repository adds a portable deployment wrapper without
 changing that application behavior.
 
+
 ## Deployment model
 
-The operator supplies only a GCP project ID and an existing GKE cluster name in
+The operator supplies only a GCP project ID, existing GKE cluster name, and
+explicit cluster location in
 [`deploy/inputs.yaml`](deploy/inputs.yaml), then runs:
 
 ```powershell
 .\deploy\deploy.ps1
 ```
 
-The script derives the cluster location, Artifact Registry location, image
+The script determines whether the supplied location is zonal or regional,
+derives the Artifact Registry location, image
 URIs, Google service-account email, and Workload Identity member. It validates
 capacity, enables only required APIs, builds and pushes the existing images,
 renders temporary manifests, applies the existing Kubernetes resources, waits
@@ -69,9 +72,14 @@ Edit only [`deploy/inputs.yaml`](deploy/inputs.yaml):
 project_id: "my-project-id"
 cluster:
   name: "my-existing-gke-cluster"
+  location: "us-central1-a"
 ```
 
-Do not add credentials, API keys, JSON keys, locations, repository names,
+`cluster.location` must be the existing cluster's zone, such as
+`us-central1-a`, or region, such as `us-central1`. The script validates the
+cluster at that exact location before continuing.
+
+Do not add credentials, API keys, JSON keys, repository names,
 service-account emails, image URIs, or IAM member strings. The script derives
 those values.
 
@@ -97,9 +105,13 @@ frontend. The recommended target is at least:
 - 8 GB RAM
 
 `deploy.ps1` reads every node's allocatable CPU and memory before creating
-images or applying resources. If the aggregate is below 4,000m CPU or 8,192Mi
-memory, it stops and prints the detected nodes. It never resizes or recreates a
-node pool automatically.
+images or applying resources. Because Kubernetes and GKE reserve some
+resources for system components, the script requires at least 3,500m
+allocatable CPU and 8,192Mi allocatable memory. This is a deployment minimum,
+not a requirement that allocatable CPU equal the node's physical CPU size.
+The recommended node size remains at least 4 vCPU / 8 GiB. The script stops
+and prints the detected nodes when the deployment minimum is not met. It never
+resizes or recreates a node pool automatically.
 
 Inspect manually:
 
@@ -116,7 +128,7 @@ In deterministic order, the script:
 1. Reads and validates `deploy/inputs.yaml`.
 2. Checks `gcloud`, `kubectl`, Docker, Docker daemon, and active gcloud auth.
 3. Sets the active gcloud project.
-4. Discovers whether the existing cluster is zonal or regional and gets credentials.
+4. Validates the supplied cluster location, determines whether it is zonal or regional, and gets credentials.
 5. Verifies kubectl connectivity.
 6. Checks allocatable node capacity.
 7. Enables `container.googleapis.com`, `artifactregistry.googleapis.com`, and
@@ -126,8 +138,12 @@ In deterministic order, the script:
 10. Builds and pushes `ai-devops-agent` and `ai-devops-frontend`.
 11. Creates `ai-devops-agent-sa` if absent and grants only `roles/aiplatform.user`.
 12. Ensures the Workload Identity pool is configured; for Standard clusters
-    it configures GKE metadata mode on node pools when required. Autopilot
-    must already report a Workload Identity pool.
+    it automatically enables GKE Workload Identity Federation on an existing
+    Standard cluster when `workloadIdentityConfig.workloadPool` is missing,
+    then verifies the pool is `<PROJECT_ID>.svc.id.goog`. For Standard
+    clusters, it checks every existing node pool and enables the GKE metadata
+    server with `GKE_METADATA` only where needed. Autopilot must already
+    report the expected Workload Identity pool.
 13. Creates the namespace and annotated Kubernetes ServiceAccount.
 14. Applies the existing read-only RBAC.
 15. Renders temporary backend/frontend manifests with derived values.
@@ -154,7 +170,7 @@ REGION-docker.pkg.dev/PROJECT_ID/ai-devops-agent-repo/ai-devops-agent:latest
 REGION-docker.pkg.dev/PROJECT_ID/ai-devops-agent-repo/ai-devops-frontend:latest
 ```
 
-The Artifact Registry region is the GKE region; a zonal location such as
+The Artifact Registry region is the GKE region; a supplied zonal location such as
 `us-central1-a` becomes `us-central1`.
 
 ## 7. Workload Identity and least privilege
@@ -261,7 +277,8 @@ kubectl delete deployment agent-test-broken -n ai-devops-agent
 
 Clone the repository, install and authenticate the prerequisites, change only
 `deploy/inputs.yaml`, then run `.\deploy\deploy.ps1`. The script derives all
-project-specific image, identity, location, and manifest values. It does not
+project-specific image, identity, and manifest values from the supplied
+project and cluster location. It does not
 require source or manifest edits.
 
 ## Local validation
@@ -272,4 +289,3 @@ cd frontend
 npm test
 npm run build
 ```
-
