@@ -73,11 +73,23 @@ project_id: "my-project-id"
 cluster:
   name: "my-existing-gke-cluster"
   location: "us-central1-a"
+agent:
+  namespace: "ai-devops-agent"
+  node_pool: "ai-devops-agent-pool"
 ```
 
 `cluster.location` must be the existing cluster's zone, such as
 `us-central1-a`, or region, such as `us-central1`. The script validates the
 cluster at that exact location before continuing.
+
+Before running the script, create the dedicated Standard GKE node pool
+manually and set its exact name in `agent.node_pool`. The script fails if that
+node pool is missing, never selects the default pool, and never creates it.
+If the configured pool does not use `GKE_METADATA`, the script automatically
+updates only that explicitly configured pool, waits for the operation, and
+verifies that it returns to `RUNNING` with `GKE_METADATA`. It never resizes,
+updates, or recreates any other node pool. `agent.namespace` is the isolated
+namespace for this installation; the script creates or reuses it.
 
 Do not add credentials, API keys, JSON keys, repository names,
 service-account emails, image URIs, or IAM member strings. The script derives
@@ -111,7 +123,9 @@ allocatable CPU and 8,192Mi allocatable memory. This is a deployment minimum,
 not a requirement that allocatable CPU equal the node's physical CPU size.
 The recommended node size remains at least 4 vCPU / 8 GiB. The script stops
 and prints the detected nodes when the deployment minimum is not met. It never
-resizes or recreates a node pool automatically.
+resizes or recreates a node pool automatically. The configured agent node pool
+is validated separately and is the only pool targeted by the generated Pod
+scheduling constraints.
 
 Inspect manually:
 
@@ -140,12 +154,15 @@ In deterministic order, the script:
 12. Ensures the Workload Identity pool is configured; for Standard clusters
     it automatically enables GKE Workload Identity Federation on an existing
     Standard cluster when `workloadIdentityConfig.workloadPool` is missing,
-    then verifies the pool is `<PROJECT_ID>.svc.id.goog`. For Standard
-    clusters, it checks every existing node pool and enables the GKE metadata
-    server with `GKE_METADATA` only where needed. Autopilot must already
-    report the expected Workload Identity pool.
-13. Creates the namespace and annotated Kubernetes ServiceAccount.
-14. Applies the existing read-only RBAC.
+    then verifies the pool is `<PROJECT_ID>.svc.id.goog`. It reads the
+    configured agent node pool's metadata mode and automatically enables
+    `GKE_METADATA` only on that explicitly configured pool when needed. It
+    waits for `RUNNING` and verifies the setting before continuing. Other node
+    pools are never modified.
+13. Creates or reuses the configured namespace and annotated Kubernetes
+    ServiceAccount.
+14. Applies the existing read-only RBAC and schedules both Deployments only
+    on `agent.node_pool`.
 15. Renders temporary backend/frontend manifests with derived values.
 16. Applies the backend, waits for readiness, and applies the ClusterIP Service.
 17. Applies the frontend, waits for readiness, and applies the LoadBalancer Service.
@@ -181,14 +198,18 @@ The Google service account is:
 ai-devops-agent-sa@PROJECT_ID.iam.gserviceaccount.com
 ```
 
-The Kubernetes ServiceAccount is `ai-devops-agent-sa` in namespace
-`ai-devops-agent`, annotated with that email. The script grants:
+The Kubernetes ServiceAccount is `ai-devops-agent-sa` in the configured
+`agent.namespace`, annotated with that email. The script grants:
 
 - `roles/aiplatform.user` to the Google runtime service account.
 - `roles/iam.workloadIdentityUser` for
-  `PROJECT_ID.svc.id.goog[ai-devops-agent/ai-devops-agent-sa]`.
+  `PROJECT_ID.svc.id.goog[AGENT_NAMESPACE/ai-devops-agent-sa]`.
 
-It never creates service-account keys. For cross-project Artifact Registry,
+It never creates service-account keys. The script only reads the configured
+node pool's metadata mode; if needed, it updates only that configured pool and
+verifies the result. Existing unrelated node pools are never modified by
+deployment.
+For cross-project Artifact Registry,
 the GKE node identity, not the runtime identity, needs the minimum
 `roles/artifactregistry.reader` role in the registry project.
 

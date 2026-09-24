@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: ai-devops-agent
-  namespace: ai-devops-agent
+  namespace: __AGENT_NAMESPACE__
   labels:
     app.kubernetes.io/name: ai-devops-kubernetes-agent
     app.kubernetes.io/component: service

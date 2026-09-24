@@ -2,5 +2,8 @@
 # Do not put credentials, keys, tokens, or secrets in this file.
 project_id: "ai-4-509612"
 cluster:
-  name: "ai-gke"
+  name: "cluster-ai"
   location: "us-central1-a"
+agent:
+  namespace: "ai-devops-agent"
+  node_pool: "ai-devops-agent-pool"

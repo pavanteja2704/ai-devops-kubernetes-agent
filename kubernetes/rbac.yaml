@@ -27,7 +27,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: ai-devops-agent-sa
-    namespace: ai-devops-agent
+    namespace: __AGENT_NAMESPACE__
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

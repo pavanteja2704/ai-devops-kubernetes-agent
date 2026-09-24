@@ -10,7 +10,8 @@ if ([string]::IsNullOrWhiteSpace($InputPath)) {
     $InputPath = Join-Path $PSScriptRoot "inputs.yaml"
 }
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
-$Namespace = "ai-devops-agent"
+$Namespace = $null
+$AgentNodePool = $null
 $Repository = "ai-devops-agent-repo"
 $BackendName = "ai-devops-agent"
 $FrontendName = "ai-devops-frontend"
@@ -223,6 +224,12 @@ function Get-NodePoolMetadataMode {
     return [string]$NodePool.config.workloadMetadataConfig.mode
 }
 
+function Get-NodePoolStatus {
+    param([object]$NodePool)
+
+    return [string]$NodePool.status
+}
+
 Write-Host "[Stage 1] Loading inputs.yaml"
 if (-not (Test-Path -LiteralPath $InputPath)) { throw "Input file not found: $InputPath" }
 $inputLines = Get-Content -LiteralPath $InputPath
@@ -235,6 +242,10 @@ $ClusterName = Get-YamlScalar $inputLines "^\s+name:"
 Write-Host "[Stage 2] Validated cluster.name"
 $ClusterLocation = Get-YamlScalar $inputLines "^\s+location:"
 Write-Host "[Stage 2] Validated cluster.location: $ClusterLocation"
+$Namespace = Get-YamlScalar $inputLines "^\s+namespace:"
+Write-Host "[Stage 2] Validated agent.namespace: $Namespace"
+$AgentNodePool = Get-YamlScalar $inputLines "^\s+node_pool:"
+Write-Host "[Stage 2] Validated agent.node_pool: $AgentNodePool"
 if ($LocalValidation) {
     $localLocationType = Get-GkeLocationType $ClusterLocation
     Write-Host "[Stage 2] Validated GKE location type: $localLocationType"
@@ -267,6 +278,12 @@ try {
 }
 Invoke-Checked "gcloud" @("container", "clusters", "get-credentials", $ClusterName, $locationFlag, "--project=$ProjectId") 300 "Get GKE credentials" | Out-Null
 Invoke-Checked "kubectl" @("cluster-info") 120 "Check Kubernetes connectivity" | Out-Null
+$agentNodePoolJson = Invoke-Checked "gcloud" @("container", "node-pools", "describe", $AgentNodePool, "--cluster=$ClusterName", $locationFlag, "--project=$ProjectId", "--format=json") 300 "Validate configured agent node pool"
+$agentNodePoolInfo = ($agentNodePoolJson -join [Environment]::NewLine) | ConvertFrom-Json
+if ([string]::IsNullOrWhiteSpace([string]$agentNodePoolInfo.name)) {
+    throw "Configured agent node pool '$AgentNodePool' was not found in cluster '$ClusterName' at '$ClusterLocation'. Create it manually before running deploy.ps1. This deployment never creates or selects another node pool."
+}
+Write-Host "[Stage 5] Configured agent node pool exists: $AgentNodePool"
 $nodeRows = Invoke-Checked "kubectl" @("get", "nodes", "-o", "jsonpath={range .items[*]}{.metadata.name}{','}{.status.allocatable.cpu}{','}{.status.allocatable.memory}{'\n'}{end}") 120 "Read node allocatable capacity"
 $totalCpu = 0
 $totalMemory = 0
@@ -283,6 +300,22 @@ foreach ($row in $nodeRows) {
 if (-not (Test-AllocatableCapacity $totalCpu $totalMemory $MinimumCpuMilli $MinimumMemoryMi)) {
     throw "Cluster allocatable capacity is below the deployment minimum of $MinimumCpuMilli mCPU allocatable CPU and $MinimumMemoryMi MiB allocatable memory. The recommended node size is at least 4 vCPU / 8 GiB; normal Kubernetes/GKE system reservations can reduce allocatable CPU below the physical CPU size. Detected approximately $totalCpu mCPU and $totalMemory MiB. Resize the cluster manually; deploy.ps1 will not resize or recreate node pools."
 }
+
+Write-Host "[Safety] Project: $ProjectId"
+Write-Host "[Safety] Cluster: $ClusterName"
+Write-Host "[Safety] Location: $ClusterLocation"
+Write-Host "[Safety] Agent namespace: $Namespace"
+Write-Host "[Safety] Agent node pool: $AgentNodePool"
+$allNodePoolJson = Invoke-Checked "gcloud" @("container", "node-pools", "list", "--cluster=$ClusterName", $locationFlag, "--project=$ProjectId", "--format=json") 300 "List existing node pools"
+$allNodePools = (($allNodePoolJson -join [Environment]::NewLine) | ConvertFrom-Json)
+Write-Host "[Safety] Existing node pools:"
+foreach ($existingNodePool in @($allNodePools)) {
+    if ($null -ne $existingNodePool -and -not [string]::IsNullOrWhiteSpace([string]$existingNodePool.name)) {
+        Write-Host "[Safety] - $($existingNodePool.name)"
+    }
+}
+Write-Host "[Safety] Only the configured agent node pool may be modified."
+Write-Host "[Safety] All other node pools will remain untouched."
 
 Write-Host "[Stage 6] Enabling required Google Cloud APIs"
 Invoke-Checked "gcloud" @("services", "enable", "container.googleapis.com", "artifactregistry.googleapis.com", "aiplatform.googleapis.com", "--project=$ProjectId") 600 "Enable required Google Cloud APIs" | Out-Null
@@ -345,9 +378,6 @@ $workloadPool = $clusterInfo.workloadIdentityConfig.workloadPool
 if (Test-WorkloadIdentityPool $workloadPool $ProjectId) {
     Write-Host "[Stage 9] Workload Identity already enabled"
 } else {
-    if ($isAutopilot) {
-        throw "The Autopilot cluster does not report the expected Workload Identity pool '$ProjectId.svc.id.goog'."
-    }
     Write-Host "[Stage 9] Workload Identity not enabled; enabling it"
     Invoke-Checked "gcloud" @("container", "clusters", "update", $ClusterName, $locationFlag, "--project=$ProjectId", "--workload-pool=${ProjectId}.svc.id.goog") 1200 "Enable GKE Workload Identity Federation" | Out-Null
     $verifiedPool = Invoke-Checked "gcloud" @("container", "clusters", "describe", $ClusterName, $locationFlag, "--project=$ProjectId", "--format=value(workloadIdentityConfig.workloadPool)") 300 "Verify GKE Workload Identity Federation"
@@ -358,21 +388,32 @@ if (Test-WorkloadIdentityPool $workloadPool $ProjectId) {
     Write-Host "[Stage 9] Workload Identity enabled"
 }
 
-if (-not $isAutopilot) {
-    Write-Host "[Stage 9] Checking node pool metadata configuration"
-    $nodePoolJson = Invoke-Checked "gcloud" @("container", "node-pools", "list", "--cluster=$ClusterName", $locationFlag, "--project=$ProjectId", "--format=json") 300 "Read GKE node pool metadata configuration"
-    $nodePools = (($nodePoolJson -join [Environment]::NewLine) | ConvertFrom-Json)
-    foreach ($nodePool in @($nodePools)) {
-        if ($null -eq $nodePool -or [string]::IsNullOrWhiteSpace([string]$nodePool.name)) { continue }
-        $metadataMode = Get-NodePoolMetadataMode $nodePool
-        if ($metadataMode -eq "GKE_METADATA") {
-            Write-Host "[Stage 9] Node pool $($nodePool.name) already uses GKE_METADATA"
-            continue
-        }
-        Write-Host "[Stage 9] Enabling GKE metadata server on node pool $($nodePool.name)"
-        Invoke-Checked "gcloud" @("container", "node-pools", "update", $nodePool.name, "--cluster=$ClusterName", $locationFlag, "--project=$ProjectId", "--workload-metadata=GKE_METADATA") 1200 "Enable GKE metadata server on node pool $($nodePool.name)" | Out-Null
+Write-Host "[Stage 9] Checking configured agent node pool metadata configuration"
+$stageNineNodePoolJson = Invoke-Checked "gcloud" @("container", "node-pools", "list", "--cluster=$ClusterName", $locationFlag, "--project=$ProjectId", "--format=json") 300 "Recheck node pools before agent-pool modification"
+$stageNineNodePools = @(($stageNineNodePoolJson -join [Environment]::NewLine) | ConvertFrom-Json)
+$matchingNodePools = @($stageNineNodePools | Where-Object { $_.name -eq $AgentNodePool })
+if ($matchingNodePools.Count -ne 1) {
+    throw "Configured agent node pool '$AgentNodePool' was not found as exactly one existing node pool. Create it manually before running deploy.ps1. No node pool was modified."
+}
+$agentNodePoolInfo = $matchingNodePools[0]
+$agentMetadataMode = Get-NodePoolMetadataMode $agentNodePoolInfo
+if ($isAutopilot) {
+    Write-Host "[Stage 9] Autopilot cluster manages node metadata configuration"
+} elseif ($agentMetadataMode -ne "GKE_METADATA") {
+    Write-Host "[Stage 9] Agent node pool is not using GKE_METADATA; updating only $AgentNodePool"
+    Invoke-Checked "gcloud" @("container", "node-pools", "update", $AgentNodePool, "--cluster=$ClusterName", $locationFlag, "--project=$ProjectId", "--workload-metadata=GKE_METADATA") 1200 "Enable GKE metadata server on configured agent node pool" | Out-Null
+    $updatedNodePoolJson = Invoke-Checked "gcloud" @("container", "node-pools", "describe", $AgentNodePool, "--cluster=$ClusterName", $locationFlag, "--project=$ProjectId", "--format=json") 300 "Verify configured agent node pool update"
+    $updatedNodePool = (($updatedNodePoolJson -join [Environment]::NewLine) | ConvertFrom-Json)
+    if ((Get-NodePoolStatus $updatedNodePool) -ne "RUNNING") {
+        throw "Configured agent node pool '$AgentNodePool' did not return to RUNNING after its metadata update. Reported status: '$(Get-NodePoolStatus $updatedNodePool)'."
     }
-    Write-Host "[Stage 9] GKE metadata server enabled"
+    if ((Get-NodePoolMetadataMode $updatedNodePool) -ne "GKE_METADATA") {
+        throw "Configured agent node pool '$AgentNodePool' metadata verification failed after update. Reported mode: '$(Get-NodePoolMetadataMode $updatedNodePool)'."
+    }
+    $agentNodePoolInfo = $updatedNodePool
+    Write-Host "[Stage 9] Agent node pool update completed; status RUNNING and GKE_METADATA verified"
+} else {
+    Write-Host "[Stage 9] Agent node pool uses GKE_METADATA"
 }
 Invoke-Checked "gcloud" @("iam", "service-accounts", "add-iam-policy-binding", $gsa, "--project=$ProjectId", "--role=roles/iam.workloadIdentityUser", "--member=serviceAccount:${ProjectId}.svc.id.goog[$Namespace/$ServiceAccountName]") 600 "Grant Workload Identity binding" | Out-Null
 
@@ -386,25 +427,48 @@ try {
         "__BACKEND_IMAGE__" = $backendImage
         "__FRONTEND_IMAGE__" = $frontendImage
         "__GCP_SERVICE_ACCOUNT_EMAIL__" = $gsa
+        "__AGENT_NAMESPACE__" = $Namespace
+        "__AGENT_NODE_POOL__" = $AgentNodePool
     }
-    $serviceAccountPath = $null
-    foreach ($name in @("serviceaccount.yaml", "deployment.yaml", "frontend-deployment.yaml")) {
+    $manifestPaths = @{}
+    foreach ($name in @("namespace.yaml", "serviceaccount.yaml", "rbac.yaml", "service.yaml", "deployment.yaml", "frontend-deployment.yaml", "frontend-service.yaml")) {
         $content = Get-Content -Raw (Join-Path $PSScriptRoot "..\kubernetes\$name")
         foreach ($key in $replacements.Keys) { $content = $content.Replace($key, $replacements[$key]) }
         $output = Join-Path $tempRoot $name
         Set-Content -Path $output -Value $content -Encoding utf8
-        if ($name -eq "serviceaccount.yaml") { $serviceAccountPath = $output }
+        $manifestPaths[$name] = $output
     }
     Write-Host "[Stage 11] Applying Kubernetes resources"
-    Invoke-Checked "kubectl" @("apply", "-f", (Join-Path $PSScriptRoot "..\kubernetes\namespace.yaml")) 300 "Apply namespace" | Out-Null
-    Invoke-Checked "kubectl" @("apply", "-f", $serviceAccountPath) 300 "Apply Kubernetes service account" | Out-Null
-    Invoke-Checked "kubectl" @("apply", "-f", (Join-Path $PSScriptRoot "..\kubernetes\rbac.yaml")) 300 "Apply read-only RBAC" | Out-Null
-    Invoke-Checked "kubectl" @("apply", "-f", (Join-Path $PSScriptRoot "..\kubernetes\service.yaml")) 300 "Apply backend service" | Out-Null
-    Invoke-Checked "kubectl" @("apply", "-f", (Join-Path $tempRoot "deployment.yaml")) 300 "Apply backend deployment" | Out-Null
+    Invoke-Checked "kubectl" @("apply", "-f", $manifestPaths["namespace.yaml"]) 300 "Apply namespace" | Out-Null
+    Invoke-Checked "kubectl" @("apply", "-f", $manifestPaths["serviceaccount.yaml"]) 300 "Apply Kubernetes service account" | Out-Null
+    Invoke-Checked "kubectl" @("apply", "-f", $manifestPaths["rbac.yaml"]) 300 "Apply read-only RBAC" | Out-Null
+    Invoke-Checked "kubectl" @("apply", "-f", $manifestPaths["service.yaml"]) 300 "Apply backend service" | Out-Null
+    Invoke-Checked "kubectl" @("apply", "-f", $manifestPaths["deployment.yaml"]) 300 "Apply backend deployment" | Out-Null
     Invoke-Checked "kubectl" @("rollout", "status", "deployment/ai-devops-agent", "-n", $Namespace, "--timeout=5m") 360 "Wait for backend rollout" | Out-Null
-    Invoke-Checked "kubectl" @("apply", "-f", (Join-Path $tempRoot "frontend-deployment.yaml")) 300 "Apply frontend deployment" | Out-Null
-    Invoke-Checked "kubectl" @("apply", "-f", (Join-Path $PSScriptRoot "..\kubernetes\frontend-service.yaml")) 300 "Apply frontend service" | Out-Null
+    Invoke-Checked "kubectl" @("apply", "-f", $manifestPaths["frontend-deployment.yaml"]) 300 "Apply frontend deployment" | Out-Null
+    Invoke-Checked "kubectl" @("apply", "-f", $manifestPaths["frontend-service.yaml"]) 300 "Apply frontend service" | Out-Null
     Invoke-Checked "kubectl" @("rollout", "status", "deployment/ai-devops-frontend", "-n", $Namespace, "--timeout=5m") 360 "Wait for frontend rollout" | Out-Null
+    Write-Host "[Stage 11] Verifying agent Pods are scheduled on node pool $AgentNodePool"
+    foreach ($podSelector in @("app.kubernetes.io/name=ai-devops-kubernetes-agent", "app.kubernetes.io/name=ai-devops-frontend")) {
+        $podRows = Invoke-Checked "kubectl" @("get", "pods", "-n", $Namespace, "-l", $podSelector, "-o", "jsonpath={range .items[*]}{.metadata.name}{','}{.spec.nodeName}{'\n'}{end}") 120 "Verify pod scheduling for $podSelector"
+        $podFound = $false
+        foreach ($podRow in $podRows) {
+            if ([string]::IsNullOrWhiteSpace($podRow)) { continue }
+            $podParts = $podRow.ToString().Split(",")
+            if ($podParts.Count -lt 2 -or [string]::IsNullOrWhiteSpace($podParts[1])) {
+                throw "Pod scheduling verification failed for selector '$podSelector': pod node name was unavailable."
+            }
+            $nodePoolLabel = Invoke-Checked "kubectl" @("get", "node", $podParts[1], "-o", "jsonpath={.metadata.labels.cloud\.google\.com/gke-nodepool}") 120 "Read node-pool label for pod $($podParts[0])"
+            if ((($nodePoolLabel -join "").Trim()) -ne $AgentNodePool) {
+                throw "Pod '$($podParts[0])' is scheduled outside configured agent node pool '$AgentNodePool'."
+            }
+            $podFound = $true
+        }
+        if (-not $podFound) {
+            throw "No Pods found for selector '$podSelector' during node-pool scheduling verification."
+        }
+    }
+    Write-Host "[Stage 11] Agent Pods verified on node pool $AgentNodePool"
     Write-Host "[Stage 12] Waiting for frontend LoadBalancer address"
     $external = ""
     for ($i = 0; $i -lt 30 -and [string]::IsNullOrWhiteSpace($external); $i++) {

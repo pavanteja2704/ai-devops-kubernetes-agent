@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: ai-devops-frontend
-  namespace: ai-devops-agent
+  namespace: __AGENT_NAMESPACE__
   labels:
     app.kubernetes.io/name: ai-devops-frontend
     app.kubernetes.io/component: web
@@ -17,6 +17,8 @@ spec:
         app.kubernetes.io/name: ai-devops-frontend
         app.kubernetes.io/component: web
     spec:
+      nodeSelector:
+        cloud.google.com/gke-nodepool: __AGENT_NODE_POOL__
       securityContext:
         runAsNonRoot: true
         runAsUser: 101
