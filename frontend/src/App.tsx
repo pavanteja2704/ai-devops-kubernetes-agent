@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, loadClusterData } from "./api";
+import { copyText } from "./clipboard";
 import type { AnalysisResult, ClusterData, Deployment, Event, Node, Pod } from "./types";
 
 type Page = "dashboard" | "troubleshooter" | "pods" | "deployments" | "nodes" | "events";
@@ -50,7 +51,7 @@ function AnalysisPanel({ result }: { result: AnalysisResult | null }) {
   if (!result) return null;
   const status = result.status || "unknown";
   const copyCommand = async (command: string) => {
-    await navigator.clipboard.writeText(command);
+    await copyText(command);
   };
   return (
     <section className={`analysis-panel incident-${status}`}>

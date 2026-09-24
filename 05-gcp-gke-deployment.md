@@ -58,11 +58,8 @@ Use:
 
 GOOGLE_CLOUD_PROJECT
 
-The current development project is:
-
-ai-agent-509509
-
-Treat this as configuration only.
+Set the target project through `deploy/inputs.yaml` and the deployment script.
+Do not copy a project ID from this documentation into application manifests.
 
 ## Google Cloud Authentication
 

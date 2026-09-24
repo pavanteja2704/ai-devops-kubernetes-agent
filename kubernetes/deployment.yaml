@@ -25,7 +25,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: ai-devops-agent
-          image: us-central1-docker.pkg.dev/ai-agent-509509/ai-devops-agent-repo/ai-devops-agent:latest
+          image: __BACKEND_IMAGE__
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
@@ -35,9 +35,9 @@ spec:
             - name: READ_ONLY_MODE
               value: "true"
             - name: GOOGLE_CLOUD_PROJECT
-              value: "ai-agent-509509"
+              value: "__PROJECT_ID__"
             - name: GOOGLE_CLOUD_LOCATION
-              value: "us-central1"
+              value: "__ARTIFACT_REGISTRY_REGION__"
             - name: GEMINI_MODEL
               value: "gemini-2.5-flash"
             - name: LOG_LEVEL

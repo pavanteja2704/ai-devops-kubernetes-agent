@@ -12,7 +12,7 @@ Important:
 Set the project and region configuration before any deployment work:
 
 ```bash
-export PROJECT_ID="ai-agent-509509"
+export PROJECT_ID="TARGET_PROJECT_ID"
 export REGION="us-central1"
 export CLUSTER_NAME="ai-devops-agent"
 export REPOSITORY_NAME="ai-devops-agent-repo"

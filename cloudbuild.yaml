@@ -1,15 +1,19 @@
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: ai-devops-agent-repo
+
 steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
       - -t
-      - us-central1-docker.pkg.dev/ai-agent-509509/ai-devops-agent-repo/ai-devops-agent:latest
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/ai-devops-agent:latest
       - .
 
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - us-central1-docker.pkg.dev/ai-agent-509509/ai-devops-agent-repo/ai-devops-agent:latest
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/ai-devops-agent:latest
 
   - name: gcr.io/cloud-builders/docker
     dir: frontend
@@ -18,14 +22,14 @@ steps:
       - -f
       - Dockerfile
       - -t
-      - us-central1-docker.pkg.dev/ai-agent-509509/ai-devops-agent-repo/ai-devops-frontend:latest
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/ai-devops-frontend:latest
       - .
 
   - name: gcr.io/cloud-builders/docker
     args:
       - push
-      - us-central1-docker.pkg.dev/ai-agent-509509/ai-devops-agent-repo/ai-devops-frontend:latest
+      - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/ai-devops-frontend:latest
 
 images:
-  - us-central1-docker.pkg.dev/ai-agent-509509/ai-devops-agent-repo/ai-devops-agent:latest
-  - us-central1-docker.pkg.dev/ai-agent-509509/ai-devops-agent-repo/ai-devops-frontend:latest
+  - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/ai-devops-agent:latest
+  - $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPOSITORY/ai-devops-frontend:latest

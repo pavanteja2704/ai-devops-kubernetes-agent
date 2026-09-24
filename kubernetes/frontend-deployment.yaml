@@ -24,7 +24,7 @@ spec:
         fsGroup: 101
       containers:
         - name: ai-devops-frontend
-          image: us-central1-docker.pkg.dev/ai-agent-509509/ai-devops-agent-repo/ai-devops-frontend:latest
+          image: __FRONTEND_IMAGE__
           imagePullPolicy: Always
           ports:
             - name: http
