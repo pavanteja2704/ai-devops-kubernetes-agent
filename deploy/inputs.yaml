@@ -1,0 +1,31 @@
+# Environment values for a manual deployment.
+# Replace placeholders before deployment. Do not put credentials or secrets here.
+
+# GCP project that owns the target GKE cluster.
+project_id: "TARGET_GCP_PROJECT_ID"
+
+cluster:
+  # Existing GKE cluster to which the application will be deployed.
+  name: "TARGET_GKE_CLUSTER_NAME"
+  # Use the cluster's zone or region.
+  location: "TARGET_GKE_LOCATION"
+  # Must be "zone" for a zonal cluster or "region" for a regional cluster.
+  location_type: "zone"
+
+# Kubernetes namespace used by the existing Step 16 manifests.
+namespace: "ai-devops-agent"
+
+google_service_account:
+  # Google service account used by the backend through Workload Identity.
+  name: "ai-devops-agent-sa"
+
+artifact_registry:
+  # Project containing the Artifact Registry repository. It may differ from project_id.
+  project_id: "TARGET_ARTIFACT_REGISTRY_PROJECT_ID"
+  location: "TARGET_ARTIFACT_REGISTRY_LOCATION"
+  repository: "TARGET_ARTIFACT_REGISTRY_REPOSITORY"
+
+images:
+  # Repository-relative image names. The manual commands prepend the registry path.
+  backend: "ai-devops-agent:latest"
+  frontend: "ai-devops-frontend:latest"

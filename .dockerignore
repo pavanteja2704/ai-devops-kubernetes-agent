@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.log
+.git/
+.gitignore
+.venv/
+.env
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.DS_Store
+frontend/node_modules/
+frontend/dist/
